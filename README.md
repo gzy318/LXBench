@@ -11,7 +11,7 @@
 
 ```bash
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/gzy318/LXBench/main/lxbench.sh)"
-
+```
 # LXBench — 全能VPS服务器测评脚本
 
 ![Shell](https://img.shields.io/badge/Shell-100%25-brightgreen)
