@@ -9,14 +9,6 @@ LXBench 是一款全功能VPS服务器性能测评脚本，集成了系统检测
 
 * * *
 
-## 🚀 一键运行
-
-```bash
-
-bash \-c "$(curl \-fsSL https://raw.githubusercontent.com/gzy318/LXBench/main/lxbench.sh)"
-```
-
-* * *
 
 ## 📦 安装方式
 
@@ -24,21 +16,21 @@ bash \-c "$(curl \-fsSL https://raw.githubusercontent.com/gzy318/LXBench/main/lx
 
 ```bash
 
-bash \-c "$(curl \-fsSL https://raw.githubusercontent.com/gzy318/LXBench/main/install.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/gzy318/LXBench/main/install.sh)"
 ```
 
 ### 方式二：直接运行
 
 ```bash
 
-bash \-c "$(curl \-fsSL https://raw.githubusercontent.com/gzy318/LXBench/main/lxbench.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/gzy318/LXBench/main/lxbench.sh)"
 ```
 
 ### 方式三：下载后运行
 
 ```bash
 
-curl \-fsSL \-o lxbench.sh https://raw.githubusercontent.com/gzy318/LXBench/main/lxbench.sh
+curl -fsSL -o lxbench.sh https://raw.githubusercontent.com/gzy318/LXBench/main/lxbench.sh
 chmod +x lxbench.sh
 ./lxbench.sh
 ```
@@ -47,7 +39,7 @@ chmod +x lxbench.sh
 
 ```bash
 
-sudo curl \-fsSL \-o /usr/local/bin/lxbench https://raw.githubusercontent.com/gzy318/LXBench/main/lxbench.sh
+sudo curl -fsSL -o /usr/local/bin/lxbench https://raw.githubusercontent.com/gzy318/LXBench/main/lxbench.sh
 sudo chmod +x /usr/local/bin/lxbench
 lxbench
 ```
