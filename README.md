@@ -103,9 +103,9 @@ lxbench
 
 *   📦 GitHub：[https://github.com/gzy318/LXBench](https://github.com/gzy318/LXBench)
     
-*   🚀 服务器推荐：[https://www.rainyun.com/xls](https://www.rainyun.com/xls)\_
+*   🚀 服务器推荐：[雨云高性价比服务器](https://www.rainyun.com/xls_)
     
-*   📝 个人博客：[https://twbk.cn](https://twbk.cn/)
+*   📝 个人博客：[叹惋博客](https://twbk.cn/)
     
 
 * * *
