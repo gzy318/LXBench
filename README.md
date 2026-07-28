@@ -1,8 +1,5 @@
 # LXBench — 全能VPS服务器测评脚本
 
-[https://img.shields.io/badge/Shell-100%2525-brightgreen](https://img.shields.io/badge/Shell-100%2525-brightgreen)  
-[https://img.shields.io/badge/Version-2.0.0-blue](https://img.shields.io/badge/Version-2.0.0-blue)  
-[https://img.shields.io/badge/License-Apache--2.0-orange](https://img.shields.io/badge/License-Apache--2.0-orange)
 
 * * *
 
