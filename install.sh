@@ -1,21 +1,12 @@
-
----
-
-## install.sh
-
-```bash
 #!/usr/bin/env bash
 #
 # LXBench 一键安装脚本
 # GitHub: https://github.com/gzy318/LXBench
 # 版本: 2.0.0
 #
-# 功能：提供交互菜单，帮助用户快速下载/运行 LXBench
-#
 
 set -e
 
-# 颜色
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
@@ -23,13 +14,11 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 PLAIN='\033[0m'
 
-# 链接
 SCRIPT_URL="https://raw.githubusercontent.com/gzy318/LXBench/main/lxbench.sh"
 GITHUB_URL="https://github.com/gzy318/LXBench"
 RAINYUN_URL="https://www.rainyun.com/xls_"
 BLOG_URL="https://twbk.cn"
 
-# Banner
 print_banner() {
     echo -e "${CYAN}"
     echo "  ╔═══════════════════════════════════════════════════════════════╗"
@@ -52,7 +41,6 @@ print_banner() {
     echo ""
 }
 
-# 下载函数
 download_file() {
     if command -v curl >/dev/null 2>&1; then
         curl -fsSL -o "$2" "$1"
@@ -64,7 +52,6 @@ download_file() {
     fi
 }
 
-# 检查更新
 check_update() {
     local remote=$(curl -fsSL "$SCRIPT_URL" 2>/dev/null | grep -o 'VERSION="[0-9.]*"' | head -1 | cut -d'"' -f2)
     local local="2.0.0"
@@ -76,17 +63,11 @@ check_update() {
     echo ""
 }
 
-# ============================================================
-# 菜单选项
-# ============================================================
-
-# 1) 直接运行
 run_lxbench() {
     echo -e "${GREEN}正在下载并运行 LXBench...${PLAIN}"
     bash -c "$(curl -fsSL ${SCRIPT_URL})"
 }
 
-# 2) 下载到当前目录
 download_lxbench() {
     echo -e "${GREEN}正在下载 LXBench...${PLAIN}"
     download_file "$SCRIPT_URL" "lxbench.sh"
@@ -94,7 +75,6 @@ download_lxbench() {
     echo -e "${GREEN}✅ 下载完成！运行 ./lxbench.sh${PLAIN}"
 }
 
-# 3) 全局安装
 install_global() {
     echo -e "${GREEN}正在安装到 /usr/local/bin...${PLAIN}"
     if [ "$EUID" -ne 0 ]; then
@@ -106,7 +86,6 @@ install_global() {
     echo -e "${GREEN}✅ 安装完成！输入 lxbench 运行${PLAIN}"
 }
 
-# 4) 查看帮助
 show_help() {
     echo ""
     echo "LXBench 是一款全能VPS测评脚本"
@@ -123,15 +102,11 @@ show_help() {
     read -p "按 Enter 返回..."
 }
 
-# 5) 退出
 exit_install() {
     echo -e "${GREEN}已退出${PLAIN}"
     exit 0
 }
 
-# ============================================================
-# 主菜单
-# ============================================================
 show_menu() {
     echo -e "${BOLD}请选择操作:${PLAIN}"
     echo "  1) 直接运行 LXBench"
@@ -151,9 +126,6 @@ show_menu() {
     esac
 }
 
-# ============================================================
-# 主入口
-# ============================================================
 main() {
     clear
     print_banner
