@@ -11,9 +11,10 @@ LXBench 是一款全功能VPS服务器性能测评脚本，集成了系统检测
 
 ## 🚀 一键运行
 
-bash
+```bash
 
 bash \-c "$(curl \-fsSL https://raw.githubusercontent.com/gzy318/LXBench/main/lxbench.sh)"
+```
 
 * * *
 
@@ -21,31 +22,35 @@ bash \-c "$(curl \-fsSL https://raw.githubusercontent.com/gzy318/LXBench/main/lx
 
 ### 方式一：一键安装脚本（推荐）
 
-bash
+```bash
 
 bash \-c "$(curl \-fsSL https://raw.githubusercontent.com/gzy318/LXBench/main/install.sh)"
+```
 
 ### 方式二：直接运行
 
-bash
+```bash
 
 bash \-c "$(curl \-fsSL https://raw.githubusercontent.com/gzy318/LXBench/main/lxbench.sh)"
+```
 
 ### 方式三：下载后运行
 
-bash
+```bash
 
 curl \-fsSL \-o lxbench.sh https://raw.githubusercontent.com/gzy318/LXBench/main/lxbench.sh
 chmod +x lxbench.sh
 ./lxbench.sh
+```
 
 ### 方式四：全局安装
 
-bash
+```bash
 
 sudo curl \-fsSL \-o /usr/local/bin/lxbench https://raw.githubusercontent.com/gzy318/LXBench/main/lxbench.sh
 sudo chmod +x /usr/local/bin/lxbench
 lxbench
+```
 
 * * *
 
