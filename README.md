@@ -21,21 +21,25 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/gzy318/LXBench/main/lxbe
 ```
 📦 安装方式
 方式一：一键安装脚本（推荐）
-bash
+```bash
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/gzy318/LXBench/main/install.sh)"
+```
 方式二：直接运行
-bash
+```bash
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/gzy318/LXBench/main/lxbench.sh)"
+```
 方式三：下载后运行
-bash
+```bash
 curl -fsSL -o lxbench.sh https://raw.githubusercontent.com/gzy318/LXBench/main/lxbench.sh
 chmod +x lxbench.sh
 ./lxbench.sh
+```
 方式四：全局安装（命令行输入 lxbench 即可运行）
-bash
+```bash
 sudo curl -fsSL -o /usr/local/bin/lxbench https://raw.githubusercontent.com/gzy318/LXBench/main/lxbench.sh
 sudo chmod +x /usr/local/bin/lxbench
 lxbench
+```
 📊 测试功能
 模块	说明
 系统信息	CPU/内存/磁盘/虚拟化/BBR状态
