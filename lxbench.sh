@@ -1,17 +1,14 @@
 #!/usr/bin/env bash
 #
-# LXBench 2.1.0 - 全能VPS服务器测评脚本
+# LXBench 2.1.1 - 全能VPS服务器测评脚本
 #
 # GitHub: https://github.com/gzy318/LXBench
 # 服务器推荐: https://www.rainyun.com/xls_
 # 个人博客: https://twbk.cn
 #
-# v2.1.0 更新:
-#   1. 重新设计评分规则（更科学合理）
-#   2. 新增"无UnixBench模式"（快速测试选项）
-#   3. HTML报告全面美化
-#   4. 控制台完整输出保存为HTML（便于分享）
-#   5. 增加评分雷达图展示
+# v2.1.1 修复:
+#   1. 修复 unbound variable 错误
+#   2. 测试模式描述改为模糊时间（很长/较长/较短）
 
 set -euo pipefail
 export LC_ALL=C LANG=C
@@ -19,7 +16,7 @@ export LC_ALL=C LANG=C
 # ============================================================
 # 版本信息
 # ============================================================
-VERSION="2.1.0"
+VERSION="2.1.1"
 GITHUB_URL="https://github.com/gzy318/LXBench"
 RAINYUN_URL="https://www.rainyun.com/xls_"
 BLOG_URL="https://twbk.cn"
@@ -39,7 +36,7 @@ DIM='\033[2m'
 PLAIN='\033[0m'
 
 # ============================================================
-# 全局变量
+# 全局变量（提前声明，避免 unbound）
 # ============================================================
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPORT_DIR="${SCRIPT_DIR}/lxbench_reports"
@@ -57,12 +54,40 @@ SCORE_MEMORY=0
 SCORE_DISK=0
 SCORE_NETWORK=0
 SCORE_IP=0
-TEST_MODE="full"
+SCORE_STEAL=5
+TEST_MODE="quick"
 UNIXBENCH_AVAILABLE=true
 
-# 用于收集完整输出
-FULL_OUTPUT=""
-export FULL_OUTPUT
+# 性能数据变量
+SYSBENCH_SINGLE="N/A"
+SYSBENCH_MULTI="N/A"
+GB_SINGLE="N/A"
+GB_MULTI="N/A"
+UNIXBENCH_SCORE="已跳过"
+MEM_READ="N/A"
+MEM_WRITE="N/A"
+MEM_LATENCY="N/A"
+DISK_WRITE="N/A"
+DISK_READ="N/A"
+DISK_RAND_READ="N/A"
+DISK_RAND_WRITE="N/A"
+DISK_IOPING="N/A"
+NET_AVG_LAT="0"
+NET_CN_AVG="0"
+IP_COUNTRY=""
+IP_CITY=""
+IP_ISP=""
+IP_ASN=""
+IP_IS_DATACENTER="unknown"
+IPV6_STATUS="未检测"
+STREAMING_RESULT=""
+BACKTRACE_RESULT=""
+SYS_INFO_OS=""
+SYS_INFO_KERNEL=""
+SYS_INFO_CPU=""
+SYS_INFO_CORES=""
+SYS_INFO_MEM=""
+SYS_INFO_DISK=""
 
 # ============================================================
 # 工具函数
@@ -133,17 +158,17 @@ get_release() {
 RELEASE=$(get_release)
 
 # ============================================================
-# 交互模式选择
+# 交互模式选择（修复版）
 # ============================================================
 select_mode() {
     echo ""
     echo -e "${BOLD}请选择测试模式:${PLAIN}"
-    echo "  1) 完整测试 (全部项目，含UnixBench，约15-20分钟)"
-    echo "  2) 快速测试 (跳过UnixBench和Geekbench，约5-8分钟)  ← 推荐日常使用"
-    echo "  3) 仅网络测试 (延迟+路由+测速)"
-    echo "  4) 仅性能测试 (CPU+内存+磁盘，不含UnixBench)"
-    echo "  5) 仅流媒体+IP质量"
-    echo "  6) 极简测试 (仅系统信息+基础性能，约3分钟)"
+    echo "  1) 完整测试 (全部项目，含UnixBench，耗时较长)"
+    echo "  2) 快速测试 (跳过UnixBench和Geekbench，耗时中等) ← 推荐日常使用"
+    echo "  3) 仅网络测试 (延迟+路由+测速，耗时较短)"
+    echo "  4) 仅性能测试 (CPU+内存+磁盘，不含UnixBench，耗时中等)"
+    echo "  5) 仅流媒体+IP质量 (耗时较短)"
+    echo "  6) 极简测试 (仅系统信息+基础性能，耗时很短)"
     echo ""
     read -p "请输入选项 [1-6，默认2]: " mode_choice
     case "${mode_choice:-2}" in
@@ -155,20 +180,31 @@ select_mode() {
         6) TEST_MODE="minimal" ;;
         *) TEST_MODE="quick" ;;
     esac
-    
-    if [ "$TEST_MODE" = "quick" ] || [ "$TEST_MODE" = "performance" ] || [ "$TEST_MODE" = "minimal" ]; then
+
+    # 只有在完整模式下才启用 UnixBench
+    if [ "$TEST_MODE" = "full" ]; then
+        UNIXBENCH_AVAILABLE=true
+    else
         UNIXBENCH_AVAILABLE=false
     fi
-    
+
     local mode_names=(
-        "完整测试 (含UnixBench)"
-        "快速测试 (跳过UnixBench)"
-        "仅网络测试"
-        "仅性能测试"
-        "仅流媒体+IP质量"
-        "极简测试"
+        "完整测试 (含UnixBench，耗时较长)"
+        "快速测试 (跳过UnixBench，耗时中等)"
+        "仅网络测试 (耗时较短)"
+        "仅性能测试 (耗时中等)"
+        "仅流媒体+IP质量 (耗时较短)"
+        "极简测试 (耗时很短)"
     )
-    local idx=$((TEST_MODE == "full" ? 0 : TEST_MODE == "quick" ? 1 : TEST_MODE == "network" ? 2 : TEST_MODE == "performance" ? 3 : TEST_MODE == "streaming" ? 4 : 5))
+    local idx=0
+    case "$TEST_MODE" in
+        full) idx=0 ;;
+        quick) idx=1 ;;
+        network) idx=2 ;;
+        performance) idx=3 ;;
+        streaming) idx=4 ;;
+        minimal) idx=5 ;;
+    esac
     print_info "已选择: ${mode_names[$idx]}"
 }
 
@@ -284,8 +320,7 @@ collect_system_info() {
     echo -e "${BOLD}运行时间${PLAIN}      : $uptime"
     echo -e "${BOLD}系统负载${PLAIN}      : $loadavg"
     echo -e "${BOLD}BBR加速${PLAIN}       : $bbr_status"
-    
-    # 保存系统信息用于报告
+
     SYS_INFO_OS="$os_version"
     SYS_INFO_KERNEL="$kernel_version"
     SYS_INFO_CPU="$cpu_model"
@@ -334,56 +369,49 @@ test_cpu_integrity() {
 }
 
 # ============================================================
-# 4. CPU性能测试 (不含UnixBench)
+# 4. CPU性能测试
 # ============================================================
 test_cpu() {
     print_title "⚡ CPU性能测试"
 
-    local single="N/A"
-    local multi="N/A"
-    
     if command -v sysbench >/dev/null 2>&1; then
         print_progress "sysbench 单核测试..."
-        single=$(sysbench cpu --cpu-max-prime=20000 --threads=1 run 2>/dev/null | grep "events per second" | awk '{print $4}')
+        SYSBENCH_SINGLE=$(sysbench cpu --cpu-max-prime=20000 --threads=1 run 2>/dev/null | grep "events per second" | awk '{print $4}')
         print_progress "sysbench 多核测试..."
-        multi=$(sysbench cpu --cpu-max-prime=20000 --threads=$(nproc) run 2>/dev/null | grep "events per second" | awk '{print $4}')
-        echo -e "${BOLD}sysbench 单核${PLAIN}    : ${GREEN}${single}${PLAIN} events/s"
-        echo -e "${BOLD}sysbench 多核${PLAIN}    : ${GREEN}${multi}${PLAIN} events/s"
-        
-        # 保存
-        SYSBENCH_SINGLE="$single"
-        SYSBENCH_MULTI="$multi"
+        SYSBENCH_MULTI=$(sysbench cpu --cpu-max-prime=20000 --threads=$(nproc) run 2>/dev/null | grep "events per second" | awk '{print $4}')
+        echo -e "${BOLD}sysbench 单核${PLAIN}    : ${GREEN}${SYSBENCH_SINGLE:-N/A}${PLAIN} events/s"
+        echo -e "${BOLD}sysbench 多核${PLAIN}    : ${GREEN}${SYSBENCH_MULTI:-N/A}${PLAIN} events/s"
     fi
 
-    # Geekbench 5 (full模式下运行)
+    # Geekbench 5 (完整模式)
     if [ "$TEST_MODE" = "full" ]; then
         print_progress "Geekbench 5 测试 (约3-5分钟)..."
         if command -v wget >/dev/null 2>&1; then
             local gb_output=$(wget -qO- https://raw.githubusercontent.com/mikeyang01/benchmark-script/master/geekbench5.sh 2>/dev/null | bash 2>/dev/null || echo "")
-            local gb_single=$(echo "$gb_output" | grep -o "Single-Core Score[^0-9]*[0-9]*" | grep -o "[0-9]*" | head -1)
-            local gb_multi=$(echo "$gb_output" | grep -o "Multi-Core Score[^0-9]*[0-9]*" | grep -o "[0-9]*" | head -1)
-            [ -n "$gb_single" ] && echo -e "${BOLD}Geekbench 5 单核${PLAIN}  : ${GREEN}${gb_single}${PLAIN}"
-            [ -n "$gb_multi" ] && echo -e "${BOLD}Geekbench 5 多核${PLAIN}  : ${GREEN}${gb_multi}${PLAIN}"
-            GB_SINGLE="${gb_single:-N/A}"
-            GB_MULTI="${gb_multi:-N/A}"
+            GB_SINGLE=$(echo "$gb_output" | grep -o "Single-Core Score[^0-9]*[0-9]*" | grep -o "[0-9]*" | head -1)
+            GB_MULTI=$(echo "$gb_output" | grep -o "Multi-Core Score[^0-9]*[0-9]*" | grep -o "[0-9]*" | head -1)
+            [ -n "$GB_SINGLE" ] && echo -e "${BOLD}Geekbench 5 单核${PLAIN}  : ${GREEN}${GB_SINGLE}${PLAIN}"
+            [ -n "$GB_MULTI" ] && echo -e "${BOLD}Geekbench 5 多核${PLAIN}  : ${GREEN}${GB_MULTI}${PLAIN}"
+            [ -z "$GB_SINGLE" ] && GB_SINGLE="N/A"
+            [ -z "$GB_MULTI" ] && GB_MULTI="N/A"
         fi
     else
-        echo -e "${DIM}Geekbench 5: 已跳过 (使用快速模式)${PLAIN}"
+        echo -e "${DIM}Geekbench 5: 已跳过${PLAIN}"
         GB_SINGLE="已跳过"
         GB_MULTI="已跳过"
     fi
 
-    # UnixBench (仅在完整模式)
+    # UnixBench (仅完整模式)
     if [ "$TEST_MODE" = "full" ] && [ "$UNIXBENCH_AVAILABLE" = true ]; then
         print_progress "UnixBench 测试 (约5-8分钟)..."
         if command -v wget >/dev/null 2>&1; then
             local ub_output=$(wget -qO- https://raw.githubusercontent.com/teddysun/across/master/unixbench.sh 2>/dev/null | bash 2>/dev/null || echo "")
-            local ub_score=$(echo "$ub_output" | grep -o "Benchmark Run:[^0-9]*[0-9.]*" | grep -o "[0-9.]*" | tail -1)
-            [ -n "$ub_score" ] && echo -e "${BOLD}UnixBench 总分${PLAIN}    : ${GREEN}${ub_score}${PLAIN}"
-            UNIXBENCH_SCORE="${ub_score:-N/A}"
+            UNIXBENCH_SCORE=$(echo "$ub_output" | grep -o "Benchmark Run:[^0-9]*[0-9.]*" | grep -o "[0-9.]*" | tail -1)
+            [ -n "$UNIXBENCH_SCORE" ] && echo -e "${BOLD}UnixBench 总分${PLAIN}    : ${GREEN}${UNIXBENCH_SCORE}${PLAIN}"
+            [ -z "$UNIXBENCH_SCORE" ] && UNIXBENCH_SCORE="N/A"
         fi
     else
-        echo -e "${DIM}UnixBench: 已跳过 (使用快速模式或无UnixBench模式)${PLAIN}"
+        echo -e "${DIM}UnixBench: 已跳过${PLAIN}"
         UNIXBENCH_SCORE="已跳过"
     fi
 }
@@ -400,16 +428,12 @@ test_memory() {
         MEM_LATENCY="N/A"
         return 1
     fi
-    local mem_read=$(sysbench memory --memory-total-size=1G --memory-oper=read run 2>/dev/null | grep "MiB transferred" | awk '{print $4}')
-    local mem_write=$(sysbench memory --memory-total-size=1G --memory-oper=write run 2>/dev/null | grep "MiB transferred" | awk '{print $4}')
-    local mem_latency=$(sysbench memory --memory-total-size=1G --memory-oper=read run 2>/dev/null | grep "avg:" | awk '{print $3}')
-    echo -e "${BOLD}内存读取速度${PLAIN}   : ${GREEN}${mem_read:-N/A}${PLAIN} MiB/s"
-    echo -e "${BOLD}内存写入速度${PLAIN}   : ${GREEN}${mem_write:-N/A}${PLAIN} MiB/s"
-    echo -e "${BOLD}内存延迟${PLAIN}       : ${mem_latency:-N/A} ns"
-    
-    MEM_READ="${mem_read:-N/A}"
-    MEM_WRITE="${mem_write:-N/A}"
-    MEM_LATENCY="${mem_latency:-N/A}"
+    MEM_READ=$(sysbench memory --memory-total-size=1G --memory-oper=read run 2>/dev/null | grep "MiB transferred" | awk '{print $4}')
+    MEM_WRITE=$(sysbench memory --memory-total-size=1G --memory-oper=write run 2>/dev/null | grep "MiB transferred" | awk '{print $4}')
+    MEM_LATENCY=$(sysbench memory --memory-total-size=1G --memory-oper=read run 2>/dev/null | grep "avg:" | awk '{print $3}')
+    echo -e "${BOLD}内存读取速度${PLAIN}   : ${GREEN}${MEM_READ:-N/A}${PLAIN} MiB/s"
+    echo -e "${BOLD}内存写入速度${PLAIN}   : ${GREEN}${MEM_WRITE:-N/A}${PLAIN} MiB/s"
+    echo -e "${BOLD}内存延迟${PLAIN}       : ${MEM_LATENCY:-N/A} ns"
 }
 
 # ============================================================
@@ -428,35 +452,29 @@ test_disk() {
         [ -n "$r" ] && { read_sum=$(echo "$read_sum + $r" | bc); read_count=$((read_count + 1)); }
         rm -f "$test_file"
     done
-    local write_avg="N/A"; [ $write_count -gt 0 ] && write_avg=$(echo "scale=2; $write_sum / $write_count" | bc)
-    local read_avg="N/A"; [ $read_count -gt 0 ] && read_avg=$(echo "scale=2; $read_sum / $read_count" | bc)
-    echo -e "${BOLD}顺序写入 (平均)${PLAIN} : ${GREEN}${write_avg}${PLAIN} MB/s"
-    echo -e "${BOLD}顺序读取 (平均)${PLAIN} : ${GREEN}${read_avg}${PLAIN} MB/s"
-    
-    DISK_WRITE="$write_avg"
-    DISK_READ="$read_avg"
+    DISK_WRITE="N/A"; [ $write_count -gt 0 ] && DISK_WRITE=$(echo "scale=2; $write_sum / $write_count" | bc)
+    DISK_READ="N/A"; [ $read_count -gt 0 ] && DISK_READ=$(echo "scale=2; $read_sum / $read_count" | bc)
+    echo -e "${BOLD}顺序写入 (平均)${PLAIN} : ${GREEN}${DISK_WRITE}${PLAIN} MB/s"
+    echo -e "${BOLD}顺序读取 (平均)${PLAIN} : ${GREEN}${DISK_READ}${PLAIN} MB/s"
 
     if command -v fio >/dev/null 2>&1; then
         print_progress "测试4K随机读写 (fio)..."
         local fio_out=$(fio --name=lxbench_4k --size=512M --filename=/tmp/lxbench_fio_test \
             --bs=4k --rw=randrw --ioengine=libaio --iodepth=64 --runtime=20 \
             --numjobs=4 --group_reporting 2>/dev/null || echo "")
-        local rand_read=$(echo "$fio_out" | grep "read:" | grep "IOPS" | head -n1 | awk '{print $2}')
-        local rand_write=$(echo "$fio_out" | grep "write:" | grep "IOPS" | head -n1 | awk '{print $2}')
-        echo -e "${BOLD}4K随机读取${PLAIN}     : ${GREEN}${rand_read:-N/A}${PLAIN} IOPS"
-        echo -e "${BOLD}4K随机写入${PLAIN}     : ${GREEN}${rand_write:-N/A}${PLAIN} IOPS"
+        DISK_RAND_READ=$(echo "$fio_out" | grep "read:" | grep "IOPS" | head -n1 | awk '{print $2}')
+        DISK_RAND_WRITE=$(echo "$fio_out" | grep "write:" | grep "IOPS" | head -n1 | awk '{print $2}')
+        echo -e "${BOLD}4K随机读取${PLAIN}     : ${GREEN}${DISK_RAND_READ:-N/A}${PLAIN} IOPS"
+        echo -e "${BOLD}4K随机写入${PLAIN}     : ${GREEN}${DISK_RAND_WRITE:-N/A}${PLAIN} IOPS"
         rm -f /tmp/lxbench_fio_test
-        DISK_RAND_READ="${rand_read:-N/A}"
-        DISK_RAND_WRITE="${rand_write:-N/A}"
     else
         DISK_RAND_READ="N/A"
         DISK_RAND_WRITE="N/A"
     fi
 
     if command -v ioping >/dev/null 2>&1; then
-        local iop=$(ioping -c 5 . 2>/dev/null | tail -n1 | awk '{print $4}' | tr -d 'ms' 2>/dev/null)
-        [ -n "$iop" ] && echo -e "${BOLD}磁盘访问延迟${PLAIN}   : ${GREEN}${iop}${PLAIN} ms"
-        DISK_IOPING="${iop:-N/A}"
+        DISK_IOPING=$(ioping -c 5 . 2>/dev/null | tail -n1 | awk '{print $4}' | tr -d 'ms' 2>/dev/null)
+        [ -n "$DISK_IOPING" ] && echo -e "${BOLD}磁盘访问延迟${PLAIN}   : ${GREEN}${DISK_IOPING}${PLAIN} ms"
     else
         DISK_IOPING="N/A"
     fi
@@ -631,7 +649,7 @@ test_backtrace_full() {
         "教育网(北京):101.6.6.6"
         "科技网(北京):159.226.1.1"
     )
-    
+
     BACKTRACE_RESULT=""
     if command -v nexttrace >/dev/null 2>&1; then
         for node in "${back_nodes[@]}"; do
@@ -699,7 +717,7 @@ test_speedtest_multi() {
 }
 
 # ============================================================
-# 11. 流媒体解锁检测 (15+平台)
+# 11. 流媒体解锁检测
 # ============================================================
 test_streaming() {
     print_title "📺 流媒体解锁检测 (15+平台)"
@@ -819,11 +837,11 @@ test_ipv6() {
 }
 
 # ============================================================
-# 15. 综合评分（重新设计 - 科学合理版）
+# 15. 综合评分
 # ============================================================
 calculate_score() {
     print_title "🏆 综合性能评分"
-    
+
     echo ""
     echo -e "${BOLD}评分规则说明:${PLAIN}"
     echo -e "  ${DIM}总分 = CPU(30) + 内存(15) + 磁盘(25) + 网络(25) + IP质量(5) = 100分${PLAIN}"
@@ -832,27 +850,15 @@ calculate_score() {
 
     # ---------- CPU评分 (0-30分) ----------
     local score_cpu=0
-    
-    # 1.1 CPU诚信度 (0-10分)
+
+    # CPU诚信度 (0-10分)
     if [ -n "${SCORE_STEAL:-}" ]; then
         score_cpu=$((score_cpu + SCORE_STEAL))
     else
-        # 临时检测steal
-        local steal_tmp=$(top -bn1 | grep "Cpu(s)" | awk '{print $NF}' | cut -d'%' -f1 2>/dev/null || echo "0")
-        if [ -n "$steal_tmp" ]; then
-            if (( $(echo "$steal_tmp < 1" | bc -l) )); then
-                score_cpu=$((score_cpu + 10))
-            elif (( $(echo "$steal_tmp < 3" | bc -l) )); then
-                score_cpu=$((score_cpu + 6))
-            else
-                score_cpu=$((score_cpu + 2))
-            fi
-        else
-            score_cpu=$((score_cpu + 5))
-        fi
+        score_cpu=$((score_cpu + 5))
     fi
-    
-    # 1.2 sysbench单核性能 (0-15分)
+
+    # sysbench单核 (0-15分)
     if [ -n "${SYSBENCH_SINGLE:-}" ] && [ "$SYSBENCH_SINGLE" != "N/A" ]; then
         if (( $(echo "$SYSBENCH_SINGLE > 2000" | bc -l) )); then
             score_cpu=$((score_cpu + 15))
@@ -870,8 +876,8 @@ calculate_score() {
             echo -e "  ${RED}CPU单核 <= 500: +0分${PLAIN}"
         fi
     fi
-    
-    # 1.3 多核加速比 (0-5分)
+
+    # 多核加速比 (0-5分)
     if [ -n "${SYSBENCH_SINGLE:-}" ] && [ -n "${SYSBENCH_MULTI:-}" ] && [ "$SYSBENCH_SINGLE" != "N/A" ] && [ "$SYSBENCH_MULTI" != "N/A" ]; then
         local ratio=$(echo "scale=2; $SYSBENCH_MULTI / $SYSBENCH_SINGLE" | bc 2>/dev/null || echo "1")
         if (( $(echo "$ratio > 3" | bc -l) )); then
@@ -884,7 +890,7 @@ calculate_score() {
             echo -e "  ${DIM}多核加速比 <= 2: +0分${PLAIN}"
         fi
     fi
-    
+
     [ $score_cpu -gt 30 ] && score_cpu=30
     SCORE_CPU=$score_cpu
     echo -e "  ${BOLD}CPU总分: ${CYAN}${score_cpu}/30${PLAIN}"
@@ -909,7 +915,7 @@ calculate_score() {
             echo -e "  ${RED}内存读取 <= 5000 MiB/s: +0分${PLAIN}"
         fi
     else
-        score_memory=5  # 保底分
+        score_memory=5
         echo -e "  ${DIM}内存测试不可用: +5分(保底)${PLAIN}"
     fi
     [ $score_memory -gt 15 ] && score_memory=15
@@ -919,8 +925,8 @@ calculate_score() {
 
     # ---------- 磁盘评分 (0-25分) ----------
     local score_disk=0
-    
-    # 3.1 顺序读取 (0-12分)
+
+    # 顺序读取 (0-12分)
     if [ -n "${DISK_READ:-}" ] && [ "$DISK_READ" != "N/A" ]; then
         if (( $(echo "$DISK_READ > 800" | bc -l) )); then
             score_disk=$((score_disk + 12))
@@ -938,8 +944,8 @@ calculate_score() {
             echo -e "  ${RED}磁盘顺序读 <= 150 MB/s: +0分${PLAIN}"
         fi
     fi
-    
-    # 3.2 4K随机读取 (0-10分)
+
+    # 4K随机读取 (0-10分)
     if [ -n "${DISK_RAND_READ:-}" ] && [ "$DISK_RAND_READ" != "N/A" ]; then
         if (( $(echo "$DISK_RAND_READ > 8000" | bc -l) )); then
             score_disk=$((score_disk + 10))
@@ -957,8 +963,8 @@ calculate_score() {
             echo -e "  ${RED}4K随机读 <= 500 IOPS: +0分${PLAIN}"
         fi
     fi
-    
-    # 3.3 ioping磁盘延迟 (0-3分)
+
+    # ioping (0-3分)
     if [ -n "${DISK_IOPING:-}" ] && [ "$DISK_IOPING" != "N/A" ]; then
         if (( $(echo "$DISK_IOPING < 0.5" | bc -l) )); then
             score_disk=$((score_disk + 3))
@@ -970,7 +976,7 @@ calculate_score() {
             echo -e "  ${DIM}磁盘延迟 >= 2ms: +0分${PLAIN}"
         fi
     fi
-    
+
     [ $score_disk -gt 25 ] && score_disk=25
     SCORE_DISK=$score_disk
     echo -e "  ${BOLD}磁盘总分: ${CYAN}${score_disk}/25${PLAIN}"
@@ -978,10 +984,8 @@ calculate_score() {
 
     # ---------- 网络评分 (0-25分) ----------
     local score_network=0
-    
-    # 根据服务器位置智能评估
+
     if [ "$SERVER_LOCATION" = "china" ]; then
-        # 国内服务器：看国内延迟
         if [ -n "${NET_AVG_LAT:-}" ] && [ "$NET_AVG_LAT" != "0" ]; then
             if (( $(echo "$NET_AVG_LAT < 20" | bc -l) )); then
                 score_network=$((score_network + 20))
@@ -1003,7 +1007,6 @@ calculate_score() {
             echo -e "  ${DIM}网络延迟无法检测: +8分(保底)${PLAIN}"
         fi
     elif [ "$SERVER_LOCATION" = "international" ]; then
-        # 海外服务器：国际延迟 + 到中国回程
         if [ -n "${NET_AVG_LAT:-}" ] && [ "$NET_AVG_LAT" != "0" ]; then
             if (( $(echo "$NET_AVG_LAT < 80" | bc -l) )); then
                 score_network=$((score_network + 12))
@@ -1018,8 +1021,7 @@ calculate_score() {
                 echo -e "  ${RED}国际平均延迟 >= 250ms: +0分${PLAIN}"
             fi
         fi
-        
-        # 到中国回程延迟 (额外加分项)
+
         if [ -n "${NET_CN_AVG:-}" ] && [ "$NET_CN_AVG" != "0" ]; then
             if (( $(echo "$NET_CN_AVG < 100" | bc -l) )); then
                 score_network=$((score_network + 8))
@@ -1038,11 +1040,10 @@ calculate_score() {
             echo -e "  ${DIM}到中国回程无法检测: +3分(保底)${PLAIN}"
         fi
     else
-        # 混合模式
         score_network=10
         echo -e "  ${DIM}混合模式: +10分(保底)${PLAIN}"
     fi
-    
+
     [ $score_network -gt 25 ] && score_network=25
     SCORE_NETWORK=$score_network
     echo -e "  ${BOLD}网络总分: ${CYAN}${score_network}/25${PLAIN}"
@@ -1072,15 +1073,14 @@ calculate_score() {
 
     echo -e "${BOLD}${CYAN}┌─────────────────────────────────────────────────────────────────┐${PLAIN}"
     echo -e "${BOLD}${CYAN}│  ${BOLD}综合性能得分: ${SCORE_TOTAL}/100                              ${PLAIN}"
-    
-    # 进度条
+
     local bar_len=30
     local filled=$((SCORE_TOTAL * bar_len / 100))
     local empty=$((bar_len - filled))
     local bar=""
     for ((i=0; i<filled; i++)); do bar="${bar}█"; done
     for ((i=0; i<empty; i++)); do bar="${bar}░"; done
-    
+
     if [ $SCORE_TOTAL -ge 85 ]; then
         echo -e "${BOLD}${CYAN}│  评级: ${GREEN}🌟🌟🌟🌟🌟 旗舰级 (Excellent)${PLAIN}                     │"
         echo -e "${BOLD}${CYAN}│  [${GREEN}${bar}${PLAIN}]${PLAIN}"
@@ -1109,25 +1109,42 @@ calculate_score() {
 generate_html_report() {
     print_title "📄 生成HTML报告"
     mkdir -p "$REPORT_DIR"
-    
+
     local score_color=""
-    local score_emoji=""
+    local badge_class=""
+    local badge_text=""
     if [ $SCORE_TOTAL -ge 85 ]; then
         score_color="#00d4ff"
-        score_emoji="🌟🌟🌟🌟🌟"
+        badge_class="badge-excellent"
+        badge_text="🌟🌟🌟🌟🌟 旗舰级"
     elif [ $SCORE_TOTAL -ge 70 ]; then
         score_color="#00ff88"
-        score_emoji="🌟🌟🌟🌟"
+        badge_class="badge-good"
+        badge_text="🌟🌟🌟🌟 优秀"
     elif [ $SCORE_TOTAL -ge 55 ]; then
         score_color="#ffaa00"
-        score_emoji="🌟🌟🌟"
+        badge_class="badge-fair"
+        badge_text="🌟🌟🌟 良好"
     elif [ $SCORE_TOTAL -ge 40 ]; then
         score_color="#ff8800"
-        score_emoji="🌟🌟"
+        badge_class="badge-average"
+        badge_text="🌟🌟 一般"
     else
         score_color="#ff4444"
-        score_emoji="🌟"
+        badge_class="badge-poor"
+        badge_text="🌟 较差"
     fi
+
+    local mode_name=""
+    case "$TEST_MODE" in
+        full) mode_name="完整测试 (含UnixBench)" ;;
+        quick) mode_name="快速测试 (跳过UnixBench)" ;;
+        network) mode_name="仅网络测试" ;;
+        performance) mode_name="仅性能测试" ;;
+        streaming) mode_name="仅流媒体+IP质量" ;;
+        minimal) mode_name="极简测试" ;;
+        *) mode_name="未知" ;;
+    esac
 
     cat > "$HTML_REPORT" << 'EOF'
 <!DOCTYPE html>
@@ -1239,7 +1256,7 @@ STREAM_ROWS_PLACEHOLDER
 🚀 <a href="RAINYUN_PLACEHOLDER">服务器推荐</a> &nbsp;|&nbsp;
 📝 <a href="BLOG_PLACEHOLDER">个人博客</a>
 </div>
-<div class="footer">LXBench v2.1.0 · 智能双模节点 · 科学评分体系</div>
+<div class="footer">LXBench v2.1.1 · 智能双模节点 · 科学评分体系</div>
 </div>
 </body>
 </html>
@@ -1247,84 +1264,29 @@ EOF
 
     # 替换占位符
     local score_color=""
+    if [ $SCORE_TOTAL -ge 85 ]; then score_color="#00d4ff"
+    elif [ $SCORE_TOTAL -ge 70 ]; then score_color="#00ff88"
+    elif [ $SCORE_TOTAL -ge 55 ]; then score_color="#ffaa00"
+    elif [ $SCORE_TOTAL -ge 40 ]; then score_color="#ff8800"
+    else score_color="#ff4444"; fi
+
     local badge_class=""
     local badge_text=""
     if [ $SCORE_TOTAL -ge 85 ]; then
-        score_color="#00d4ff"
         badge_class="badge-excellent"
         badge_text="🌟🌟🌟🌟🌟 旗舰级"
     elif [ $SCORE_TOTAL -ge 70 ]; then
-        score_color="#00ff88"
         badge_class="badge-good"
         badge_text="🌟🌟🌟🌟 优秀"
     elif [ $SCORE_TOTAL -ge 55 ]; then
-        score_color="#ffaa00"
         badge_class="badge-fair"
         badge_text="🌟🌟🌟 良好"
     elif [ $SCORE_TOTAL -ge 40 ]; then
-        score_color="#ff8800"
         badge_class="badge-average"
         badge_text="🌟🌟 一般"
     else
-        score_color="#ff4444"
         badge_class="badge-poor"
         badge_text="🌟 较差"
-    fi
-
-    local mode_name=""
-    case "$TEST_MODE" in
-        full) mode_name="完整测试 (含UnixBench)" ;;
-        quick) mode_name="快速测试 (跳过UnixBench)" ;;
-        network) mode_name="仅网络测试" ;;
-        performance) mode_name="仅性能测试" ;;
-        streaming) mode_name="仅流媒体+IP质量" ;;
-        minimal) mode_name="极简测试" ;;
-        *) mode_name="未知" ;;
-    esac
-
-    local perf_rows=""
-    perf_rows="${perf_rows}<tr><td>操作系统</td><td>${SYS_INFO_OS:-未知}</td></tr>"
-    perf_rows="${perf_rows}<tr><td>CPU</td><td>${SYS_INFO_CPU:-未知} (${SYS_INFO_CORES:-0}核)</td></tr>"
-    perf_rows="${perf_rows}<tr><td>sysbench 单核</td><td>${SYSBENCH_SINGLE:-N/A} events/s</td></tr>"
-    perf_rows="${perf_rows}<tr><td>sysbench 多核</td><td>${SYSBENCH_MULTI:-N/A} events/s</td></tr>"
-    perf_rows="${perf_rows}<tr><td>Geekbench 5</td><td>单核: ${GB_SINGLE:-N/A} / 多核: ${GB_MULTI:-N/A}</td></tr>"
-    perf_rows="${perf_rows}<tr><td>UnixBench</td><td>${UNIXBENCH_SCORE:-已跳过}</td></tr>"
-    perf_rows="${perf_rows}<tr><td>内存读取</td><td>${MEM_READ:-N/A} MiB/s</td></tr>"
-    perf_rows="${perf_rows}<tr><td>磁盘顺序读写</td><td>读: ${DISK_READ:-N/A} / 写: ${DISK_WRITE:-N/A} MB/s</td></tr>"
-    perf_rows="${perf_rows}<tr><td>4K随机读取</td><td>${DISK_RAND_READ:-N/A} IOPS</td></tr>"
-
-    local net_rows=""
-    # 从网络测试中提取几个关键节点
-    local net_nodes=("上海电信:180.153.0.1" "北京电信:219.141.136.10" "广州电信:183.56.128.1" "香港:203.80.96.10" "新加坡:103.7.8.10" "洛杉矶:208.67.222.222")
-    for node in "${net_nodes[@]}"; do
-        local name=$(echo "$node" | cut -d: -f1)
-        local ip=$(echo "$node" | cut -d: -f2)
-        local lat=$(ping -c 2 -W 2 "$ip" 2>/dev/null | tail -n1 | awk -F '/' '{print $5}' 2>/dev/null)
-        if [ -n "$lat" ]; then
-            local color=""
-            if (( $(echo "$lat < 50" | bc -l) )); then color="tag-green"
-            elif (( $(echo "$lat < 150" | bc -l) )); then color="tag-yellow"
-            else color="tag-red"; fi
-            net_rows="${net_rows}<tr><td>${name}</td><td class=\"${color}\">${lat} ms</td></tr>"
-        else
-            net_rows="${net_rows}<tr><td>${name}</td><td class=\"tag-gray\">超时</td></tr>"
-        fi
-    done
-
-    local stream_rows=""
-    # 从之前保存的流媒体结果中提取
-    if [ -n "${STREAMING_RESULT:-}" ]; then
-        while IFS= read -r line; do
-            if [[ "$line" == *"✅"* ]]; then
-                local pname=$(echo "$line" | cut -d: -f1)
-                stream_rows="${stream_rows}<tr><td>${pname}</td><td class=\"tag-green\">✅ 可访问</td></tr>"
-            elif [[ "$line" == *"❌"* ]]; then
-                local pname=$(echo "$line" | cut -d: -f1)
-                stream_rows="${stream_rows}<tr><td>${pname}</td><td class=\"tag-red\">❌ 不可访问</td></tr>"
-            fi
-        done <<< "$(echo -e "$STREAMING_RESULT")"
-    else
-        stream_rows="<tr><td colspan=\"2\" class=\"tag-gray\">未检测或数据不可用</td></tr>"
     fi
 
     sed -i \
@@ -1351,7 +1313,49 @@ EOF
         -e "s|BLOG_PLACEHOLDER|${BLOG_URL}|g" \
         "$HTML_REPORT"
 
-    # 替换表格内容
+    # 替换表格
+    local perf_rows=""
+    perf_rows="${perf_rows}<tr><td>操作系统</td><td>${SYS_INFO_OS:-未知}</td></tr>"
+    perf_rows="${perf_rows}<tr><td>CPU</td><td>${SYS_INFO_CPU:-未知} (${SYS_INFO_CORES:-0}核)</td></tr>"
+    perf_rows="${perf_rows}<tr><td>sysbench 单核</td><td>${SYSBENCH_SINGLE:-N/A} events/s</td></tr>"
+    perf_rows="${perf_rows}<tr><td>sysbench 多核</td><td>${SYSBENCH_MULTI:-N/A} events/s</td></tr>"
+    perf_rows="${perf_rows}<tr><td>Geekbench 5</td><td>单核: ${GB_SINGLE:-N/A} / 多核: ${GB_MULTI:-N/A}</td></tr>"
+    perf_rows="${perf_rows}<tr><td>UnixBench</td><td>${UNIXBENCH_SCORE:-已跳过}</td></tr>"
+    perf_rows="${perf_rows}<tr><td>内存读取</td><td>${MEM_READ:-N/A} MiB/s</td></tr>"
+    perf_rows="${perf_rows}<tr><td>磁盘顺序读写</td><td>读: ${DISK_READ:-N/A} / 写: ${DISK_WRITE:-N/A} MB/s</td></tr>"
+    perf_rows="${perf_rows}<tr><td>4K随机读取</td><td>${DISK_RAND_READ:-N/A} IOPS</td></tr>"
+
+    local net_rows=""
+    local net_nodes=("上海电信:180.153.0.1" "北京电信:219.141.136.10" "广州电信:183.56.128.1" "香港:203.80.96.10" "新加坡:103.7.8.10" "洛杉矶:208.67.222.222")
+    for node in "${net_nodes[@]}"; do
+        local name=$(echo "$node" | cut -d: -f1)
+        local ip=$(echo "$node" | cut -d: -f2)
+        local lat=$(ping -c 2 -W 2 "$ip" 2>/dev/null | tail -n1 | awk -F '/' '{print $5}' 2>/dev/null)
+        if [ -n "$lat" ]; then
+            local color="tag-green"
+            if (( $(echo "$lat >= 150" | bc -l) )); then color="tag-red"
+            elif (( $(echo "$lat >= 50" | bc -l) )); then color="tag-yellow"; fi
+            net_rows="${net_rows}<tr><td>${name}</td><td class=\"${color}\">${lat} ms</td></tr>"
+        else
+            net_rows="${net_rows}<tr><td>${name}</td><td class=\"tag-gray\">超时</td></tr>"
+        fi
+    done
+
+    local stream_rows=""
+    if [ -n "${STREAMING_RESULT:-}" ]; then
+        while IFS= read -r line; do
+            if [[ "$line" == *"✅"* ]]; then
+                local pname=$(echo "$line" | cut -d: -f1)
+                stream_rows="${stream_rows}<tr><td>${pname}</td><td class=\"tag-green\">✅ 可访问</td></tr>"
+            elif [[ "$line" == *"❌"* ]]; then
+                local pname=$(echo "$line" | cut -d: -f1)
+                stream_rows="${stream_rows}<tr><td>${pname}</td><td class=\"tag-red\">❌ 不可访问</td></tr>"
+            fi
+        done <<< "$(echo -e "$STREAMING_RESULT")"
+    else
+        stream_rows="<tr><td colspan=\"2\" class=\"tag-gray\">未检测或数据不可用</td></tr>"
+    fi
+
     sed -i "/PERF_ROWS_PLACEHOLDER/{r /dev/stdin
 d}" "$HTML_REPORT" <<< "$perf_rows"
     sed -i "/NET_ROWS_PLACEHOLDER/{r /dev/stdin
@@ -1426,7 +1430,6 @@ main() {
     local start_time=$(date +%s)
     mkdir -p "$REPORT_DIR"
 
-    # 开始记录完整输出
     exec > >(tee -a "$FULL_LOG")
     exec 2>&1
 
@@ -1449,7 +1452,7 @@ main() {
 
     local end_time=$(date +%s)
     local duration=$((end_time - start_time))
-    
+
     echo ""
     print_title "✅ 测评完成"
     echo -e "${BOLD}总耗时${PLAIN}: ${CYAN}$((duration/60))分$((duration%60))秒${PLAIN}"
