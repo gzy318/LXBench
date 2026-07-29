@@ -1,25 +1,12 @@
 #!/usr/bin/env bash
 #
 # LXBench 2.0 - 全能VPS服务器测评脚本
-# 
+#
 # GitHub: https://github.com/gzy318/LXBench
 # 服务器推荐: https://www.rainyun.com/xls_
 # 个人博客: https://twbk.cn
 #
-# 核心特性 (v2.0 新增):
-#   1. Geekbench 5 + UnixBench 双跑分
-#   2. CPU诚信度/超卖检测 (Steal Time + Kernel Latency)
-#   3. 海外服务器 → 国内回程延迟+路由测试
-#   4. 完整五网回程路由 (电信/联通/移动/教育网/科技网)
-#   5. 去程路由检测 (国内→服务器)
-#   6. 流媒体解锁 15+ 平台
-#   7. DNS泄露检测 + IPv6检测
-#   8. 交互模式 (可选择测试项目)
-#   9. Markdown报告导出
-#  10. 三网多节点智能测速
-#
-# 使用方法：bash lxbench.sh
-# 保存报告：bash lxbench.sh 2>&1 | tee report.txt
+# v2.0.1 - 修复评分规则，改为"基础分+加分"模式
 
 set -euo pipefail
 export LC_ALL=C LANG=C
@@ -27,7 +14,7 @@ export LC_ALL=C LANG=C
 # ============================================================
 # 版本信息
 # ============================================================
-VERSION="2.0.0"
+VERSION="2.0.1"
 GITHUB_URL="https://github.com/gzy318/LXBench"
 RAINYUN_URL="https://www.rainyun.com/xls_"
 BLOG_URL="https://twbk.cn"
@@ -60,7 +47,7 @@ SERVER_COUNTRY=""
 SERVER_CITY=""
 SERVER_ISP=""
 SCORE_TOTAL=0
-TEST_MODE="full"  # full, quick, network, performance, streaming
+TEST_MODE="full"
 
 # ============================================================
 # 工具函数
@@ -77,14 +64,13 @@ print_banner() {
     echo "  ║   ╚══════╝╚═╝  ╚═╝╚═════╝ ╚══════╝╚═╝  ╚═══╝ ╚═════╝╚═╝  ╚═╝  ║"
     echo "  ║                                                               ║"
     echo "  ║          全能VPS服务器测评脚本 v${VERSION}                    ║"
-    echo "  ║     智能双模节点 · Geekbench双跑分 · 超卖检测                ║"
+    echo "  ║     智能双模节点 · 基础分45+加分制 · 超卖检测                ║"
     echo "  ║     海外→国内回程 · 五网路由 · 15+流媒体                     ║"
     echo "  ╚═══════════════════════════════════════════════════════════════╝"
     echo -e "${PLAIN}"
-    
-    echo -e "${CYAN}📦 GitHub: ${WHITE}${GITHUB_URL}${PLAIN}"
-    echo -e "${CYAN}🚀 服务器推荐: ${WHITE}${RAINYUN_URL}${PLAIN}"
-    echo -e "${CYAN}📝 个人博客: ${WHITE}${BLOG_URL}${PLAIN}"
+    echo -e "${CYAN}📦 ${GITHUB_URL}${PLAIN}"
+    echo -e "${CYAN}🚀 ${RAINYUN_URL}${PLAIN}"
+    echo -e "${CYAN}📝 ${BLOG_URL}${PLAIN}"
     echo ""
 }
 
@@ -160,7 +146,7 @@ select_mode() {
 install_deps() {
     local deps=()
     case "$RELEASE" in
-        centos) 
+        centos)
             command -v curl >/dev/null 2>&1 || deps+=("curl")
             command -v wget >/dev/null 2>&1 || deps+=("wget")
             command -v bc >/dev/null 2>&1 || deps+=("bc")
@@ -202,7 +188,7 @@ install_deps() {
 detect_location() {
     print_title "📍 地理位置智能检测"
     print_progress "正在检测服务器IP归属地..."
-    
+
     local ip_info=$(curl -s --max-time 5 "http://ip-api.com/json/" 2>/dev/null || echo "")
     if [ -n "$ip_info" ] && echo "$ip_info" | grep -q '"status":"success"'; then
         SERVER_COUNTRY=$(echo "$ip_info" | grep -o '"country":"[^"]*"' | cut -d'"' -f4 | head -1)
@@ -215,11 +201,11 @@ detect_location() {
             SERVER_LOCATION="international"
         fi
     fi
-    
+
     echo ""
     echo -e "${BOLD}服务器位置${PLAIN}    : ${CYAN}${SERVER_COUNTRY:-未知} - ${SERVER_CITY:-未知}${PLAIN}"
     echo -e "${BOLD}运营商${PLAIN}        : ${CYAN}${SERVER_ISP:-未知}${PLAIN}"
-    
+
     if [ "$SERVER_LOCATION" = "china" ]; then
         echo -e "${BOLD}检测结果${PLAIN}        : ${GREEN}🇨🇳 中国大陆服务器 → 启用国内三网测试节点${PLAIN}"
     elif [ "$SERVER_LOCATION" = "international" ]; then
@@ -235,7 +221,7 @@ detect_location() {
 # ============================================================
 collect_system_info() {
     print_title "💻 系统信息"
-    
+
     local cpu_model=$(grep "model name" /proc/cpuinfo | head -n1 | cut -d: -f2 | sed 's/^[ \t]*//')
     local cpu_cores=$(grep -c "processor" /proc/cpuinfo)
     local cpu_arch=$(uname -m)
@@ -254,7 +240,7 @@ collect_system_info() {
     local loadavg=$(cat /proc/loadavg | awk '{print $1", "$2", "$3}')
     local bbr_status="未开启"
     sysctl net.ipv4.tcp_congestion_control 2>/dev/null | grep -q "bbr" && bbr_status="已开启 ✅"
-    
+
     echo -e "${BOLD}操作系统${PLAIN}      : $os_version"
     echo -e "${BOLD}内核版本${PLAIN}      : $kernel_version"
     echo -e "${BOLD}CPU 型号${PLAIN}      : $cpu_model"
@@ -269,55 +255,47 @@ collect_system_info() {
 }
 
 # ============================================================
-# 3. CPU诚信度检测 (超卖检测) - 新增
+# 3. CPU诚信度检测
 # ============================================================
 test_cpu_integrity() {
     print_title "🔍 CPU诚信度/超卖检测"
-    print_info "检测Steal Time和Kernel Latency，判断VPS是否被超卖[reference:24]"
-    
-    # 采集一段时间的steal time
+    print_info "检测Steal Time和Kernel Latency，判断VPS是否被超卖"
+
     local steal_sum=0
     local latency_sum=0
     local samples=10
-    
+
     for i in $(seq 1 $samples); do
         local steal=$(top -bn1 | grep "Cpu(s)" | awk '{print $NF}' | cut -d'%' -f1 2>/dev/null || echo "0")
         [ -z "$steal" ] && steal=0
         steal_sum=$(echo "$steal_sum + $steal" | bc 2>/dev/null || echo "$steal_sum")
-        
-        # 使用vmstat检测内核延迟
         local latency=$(vmstat 1 2 | tail -n1 | awk '{print $1}' 2>/dev/null || echo "0")
         [ -z "$latency" ] && latency=0
         latency_sum=$(echo "$latency_sum + $latency" | bc 2>/dev/null || echo "$latency_sum")
         sleep 0.5
     done
-    
+
     local steal_avg=$(echo "scale=2; $steal_sum / $samples" | bc 2>/dev/null || echo "0")
     local latency_avg=$(echo "scale=2; $latency_sum / $samples" | bc 2>/dev/null || echo "0")
-    
+
     echo -e "${BOLD}Steal Time (平均)${PLAIN}  : ${CYAN}${steal_avg}%${PLAIN}"
     echo -e "${BOLD}Kernel Latency (平均)${PLAIN}: ${CYAN}${latency_avg}ms${PLAIN}"
-    
-    # 评价
+
     if (( $(echo "$steal_avg < 0.5" | bc -l) )); then
         echo -e "${BOLD}超卖检测${PLAIN}        : ${GREEN}✅ 正常 (无超卖) ★★★★★${PLAIN}"
-        SCORE_TOTAL=$((SCORE_TOTAL + 10))
     elif (( $(echo "$steal_avg < 2.0" | bc -l) )); then
         echo -e "${BOLD}超卖检测${PLAIN}        : ${YELLOW}⚠️ 轻度超卖 ★★★${PLAIN}"
-        SCORE_TOTAL=$((SCORE_TOTAL + 5))
     else
         echo -e "${BOLD}超卖检测${PLAIN}        : ${RED}❌ 严重超卖 ★${PLAIN}"
-        SCORE_TOTAL=$((SCORE_TOTAL + 0))
     fi
 }
 
 # ============================================================
-# 4. CPU性能测试 (sysbench + Geekbench 5 + UnixBench)
+# 4. CPU性能测试
 # ============================================================
 test_cpu() {
     print_title "⚡ CPU性能测试"
-    
-    # 4.1 sysbench
+
     if command -v sysbench >/dev/null 2>&1; then
         print_progress "sysbench 单核测试..."
         local single=$(sysbench cpu --cpu-max-prime=20000 --threads=1 run 2>/dev/null | grep "events per second" | awk '{print $4}')
@@ -326,8 +304,7 @@ test_cpu() {
         echo -e "${BOLD}sysbench 单核${PLAIN}    : ${GREEN}${single:-N/A}${PLAIN} events/s"
         echo -e "${BOLD}sysbench 多核${PLAIN}    : ${GREEN}${multi:-N/A}${PLAIN} events/s"
     fi
-    
-    # 4.2 Geekbench 5 (仅在完整模式)
+
     if [ "$TEST_MODE" = "full" ]; then
         print_progress "Geekbench 5 测试 (约3-5分钟)..."
         if command -v wget >/dev/null 2>&1; then
@@ -338,8 +315,7 @@ test_cpu() {
             [ -n "$gb_multi" ] && echo -e "${BOLD}Geekbench 5 多核${PLAIN}  : ${GREEN}${gb_multi}${PLAIN}"
         fi
     fi
-    
-    # 4.3 UnixBench (仅在完整模式)[reference:25]
+
     if [ "$TEST_MODE" = "full" ]; then
         print_progress "UnixBench 测试 (约5-8分钟)..."
         if command -v wget >/dev/null 2>&1; then
@@ -368,12 +344,11 @@ test_memory() {
 }
 
 # ============================================================
-# 6. 磁盘I/O测试 (dd + fio + ioping)
+# 6. 磁盘I/O测试
 # ============================================================
 test_disk() {
     print_title "💾 磁盘I/O测试"
-    
-    # dd顺序读写 (三次平均)
+
     local test_file="/tmp/lxbench_io_test"
     local write_sum=0 read_sum=0
     local write_count=0 read_count=0
@@ -388,8 +363,7 @@ test_disk() {
     local read_avg="N/A"; [ $read_count -gt 0 ] && read_avg=$(echo "scale=2; $read_sum / $read_count" | bc)
     echo -e "${BOLD}顺序写入 (平均)${PLAIN} : ${GREEN}${write_avg}${PLAIN} MB/s"
     echo -e "${BOLD}顺序读取 (平均)${PLAIN} : ${GREEN}${read_avg}${PLAIN} MB/s"
-    
-    # fio 4K随机读写
+
     if command -v fio >/dev/null 2>&1; then
         local fio_out=$(fio --name=lxbench_4k --size=512M --filename=/tmp/lxbench_fio_test \
             --bs=4k --rw=randrw --ioengine=libaio --iodepth=64 --runtime=20 \
@@ -400,8 +374,7 @@ test_disk() {
         echo -e "${BOLD}4K随机写入${PLAIN}     : ${GREEN}${rand_write:-N/A}${PLAIN} IOPS"
         rm -f /tmp/lxbench_fio_test
     fi
-    
-    # ioping - 新增：磁盘延迟测试
+
     if command -v ioping >/dev/null 2>&1; then
         local iop=$(ioping -c 5 . 2>/dev/null | tail -n1 | awk '{print $4}' | tr -d 'ms' 2>/dev/null)
         [ -n "$iop" ] && echo -e "${BOLD}磁盘访问延迟${PLAIN}   : ${GREEN}${iop}${PLAIN} ms"
@@ -409,34 +382,32 @@ test_disk() {
 }
 
 # ============================================================
-# 7. 网络测试 (智能双模 + 海外→国内回程)
+# 7. 网络测试
 # ============================================================
 test_network() {
     print_title "🌐 网络质量测试"
     echo -e "${BOLD}📍 当前测试模式${PLAIN}: ${CYAN}${SERVER_LOCATION}${PLAIN}"
     echo ""
-    
+
     if [ "$SERVER_LOCATION" = "china" ]; then
         test_network_china
     elif [ "$SERVER_LOCATION" = "international" ]; then
         test_network_international
-        # 海外服务器额外测试到中国的回程 - 新增
         test_network_china_return
     else
         test_network_mixed
     fi
-    
+
     test_backtrace_full
     test_traceroute_inbound
     test_speedtest_multi
 }
 
-# 国内网络测试 (15节点)
 test_network_china() {
     echo -e "${BOLD}${CYAN}--- 国内三网延迟测试 (15节点) ---${PLAIN}"
     echo -e "${DIM}(绿色<50ms | 黄色50-150ms | 红色>150ms)${PLAIN}"
     echo ""
-    
+
     local nodes=(
         "上海电信:180.153.0.1" "北京电信:219.141.136.10" "广州电信:183.56.128.1"
         "成都电信:61.139.2.69" "武汉电信:58.49.0.1"
@@ -454,11 +425,10 @@ test_network_china() {
     done
 }
 
-# 国际网络测试 (15节点)
 test_network_international() {
     echo -e "${BOLD}${CYAN}--- 全球网络延迟测试 (15节点) ---${PLAIN}"
     echo ""
-    
+
     local nodes=(
         "香港:203.80.96.10" "新加坡:103.7.8.10" "东京:103.28.248.1"
         "首尔:211.234.83.1" "台北:168.95.1.1"
@@ -476,13 +446,12 @@ test_network_international() {
     done
 }
 
-# 🆕 海外服务器 → 国内回程测试 (核心新增)
 test_network_china_return() {
     echo ""
     echo -e "${BOLD}${CYAN}--- 🌏 海外→中国大陆回程延迟 ---${PLAIN}"
     print_info "测试从海外服务器到中国主要城市的延迟 (对国内用户访问体验至关重要)"
     echo ""
-    
+
     local cn_nodes=(
         "上海电信:180.153.0.1" "北京电信:219.141.136.10" "广州电信:183.56.128.1"
         "成都电信:61.139.2.69" "上海联通:210.22.97.1" "北京联通:123.125.128.1"
@@ -522,14 +491,14 @@ test_network_mixed() {
 }
 
 # ============================================================
-# 8. 完整五网回程路由 (新增)
+# 8. 五网回程路由
 # ============================================================
 test_backtrace_full() {
     echo ""
     print_title "🔄 五网回程路由测试"
-    print_info "测试服务器到五大运营商骨干网的回程路径[reference:26]"
+    print_info "测试服务器到五大运营商骨干网的回程路径"
     echo ""
-    
+
     local back_nodes=(
         "电信(广州):183.56.128.1"
         "联通(广州):210.21.196.6"
@@ -537,7 +506,7 @@ test_backtrace_full() {
         "教育网(北京):101.6.6.6"
         "科技网(北京):159.226.1.1"
     )
-    
+
     if command -v nexttrace >/dev/null 2>&1; then
         for node in "${back_nodes[@]}"; do
             local name=$(echo "$node" | cut -d: -f1)
@@ -558,17 +527,17 @@ test_backtrace_full() {
 }
 
 # ============================================================
-# 9. 去程路由检测 (新增)
+# 9. 去程路由检测
 # ============================================================
 test_traceroute_inbound() {
     print_title "📥 去程路由检测"
     print_info "从国内节点到服务器的路由路径 (判断国内用户访问是否最优)"
     echo ""
-    
+
     local server_ip=$(curl -s --max-time 3 ifconfig.me 2>/dev/null || echo "未知")
     echo -e "${BOLD}服务器IP${PLAIN}: ${CYAN}${server_ip}${PLAIN}"
     echo ""
-    
+
     if command -v mtr >/dev/null 2>&1; then
         local test_ips=("180.153.0.1" "210.22.97.1" "211.136.112.50")
         local test_names=("上海电信" "上海联通" "上海移动")
@@ -582,13 +551,12 @@ test_traceroute_inbound() {
 }
 
 # ============================================================
-# 10. 三网多节点智能测速 (新增)[reference:27]
+# 10. 三网多节点测速
 # ============================================================
 test_speedtest_multi() {
     echo ""
     print_title "📶 三网多节点测速"
-    print_info "每个运营商选择最优节点进行测速"
-    
+
     if command -v speedtest >/dev/null 2>&1; then
         speedtest --simple 2>/dev/null || print_warn "speedtest测速失败"
     elif command -v speedtest-cli >/dev/null 2>&1; then
@@ -607,7 +575,7 @@ test_streaming() {
     print_title "📺 流媒体解锁检测 (15+平台)"
     print_info "检测IP对各大流媒体平台的解锁状态"
     echo ""
-    
+
     local platforms=(
         "Netflix:https://www.netflix.com"
         "YouTube:https://www.youtube.com"
@@ -625,7 +593,7 @@ test_streaming() {
         "AbemaTV:https://abema.tv"
         "Hulu:https://www.hulu.com"
     )
-    
+
     for platform in "${platforms[@]}"; do
         local name=$(echo "$platform" | cut -d: -f1)
         local url=$(echo "$platform" | cut -d: -f2-)
@@ -640,7 +608,7 @@ test_streaming() {
 }
 
 # ============================================================
-# 12. IP质量检测 (增强)
+# 12. IP质量检测
 # ============================================================
 test_ip_quality() {
     print_title "🛡️ IP质量检测"
@@ -666,14 +634,13 @@ test_ip_quality() {
 }
 
 # ============================================================
-# 13. DNS泄露检测 (新增)
+# 13. DNS泄露检测
 # ============================================================
 test_dns_leak() {
     print_title "🔐 DNS泄露检测"
     local dns_servers=$(cat /etc/resolv.conf 2>/dev/null | grep "^nameserver" | awk '{print $2}' | tr '\n' ' ')
     echo -e "${BOLD}当前DNS服务器${PLAIN}  : ${CYAN}${dns_servers:-未设置}${PLAIN}"
-    
-    # 检测DNS是否泄露 (查询国外域名是否返回国内IP)
+
     local test_domains=("google.com" "youtube.com" "facebook.com")
     for domain in "${test_domains[@]}"; do
         local ip=$(dig +short "$domain" 2>/dev/null | head -1)
@@ -689,7 +656,7 @@ test_dns_leak() {
 }
 
 # ============================================================
-# 14. IPv6检测 (新增)
+# 14. IPv6检测
 # ============================================================
 test_ipv6() {
     print_title "🌐 IPv6检测"
@@ -705,26 +672,174 @@ test_ipv6() {
 }
 
 # ============================================================
-# 15. 综合评分
+# 15. 综合评分（重写版 - 基础分+加分制）
 # ============================================================
 calculate_score() {
     print_title "🏆 综合性能评分"
-    # 网络评分
-    local net_good=0
-    if [ "$SERVER_LOCATION" = "china" ]; then
-        for ip in "180.153.0.1" "210.22.97.1" "211.136.112.50"; do
-            local lat=$(ping -c 2 -W 2 "$ip" 2>/dev/null | tail -n1 | awk -F '/' '{print $5}')
-            [ -n "$lat" ] && (( $(echo "$lat < 30" | bc -l) )) && net_good=$((net_good + 1))
-        done
-    else
-        for ip in "8.8.8.8" "1.1.1.1"; do
-            local lat=$(ping -c 2 -W 3 "$ip" 2>/dev/null | tail -n1 | awk -F '/' '{print $5}')
-            [ -n "$lat" ] && (( $(echo "$lat < 150" | bc -l) )) && net_good=$((net_good + 1))
-        done
+
+    # 初始化各项分数（基础分合计45分）
+    local score_cpu_integrity=5
+    local score_cpu_perf=10
+    local score_memory=8
+    local score_disk_seq=7
+    local score_disk_rand=0
+    local score_network=10
+    local score_ip=5
+
+    echo ""
+    echo -e "${BOLD}评分规则: 基础分45分 + 各维度加分 = 总分 (最高100分)${PLAIN}"
+    echo -e "${DIM}评级门槛: 旗舰级≥85 | 优秀≥70 | 良好≥55 | 一般≥40 | 较差<40${PLAIN}"
+    echo ""
+
+    # 1. CPU诚信度 (Steal Time)
+    print_progress "评估 CPU 诚信度..."
+    local steal=$(top -bn1 | grep "Cpu(s)" | awk '{print $NF}' | cut -d'%' -f1 2>/dev/null || echo "0")
+    if [ -n "$steal" ]; then
+        if (( $(echo "$steal < 1" | bc -l) )); then
+            score_cpu_integrity=10
+            echo -e "  CPU诚信度: ${GREEN}+5 (Steal < 1%, 优秀)${PLAIN}"
+        elif (( $(echo "$steal < 3" | bc -l) )); then
+            score_cpu_integrity=8
+            echo -e "  CPU诚信度: ${GREEN}+3 (Steal < 3%, 良好)${PLAIN}"
+        else
+            echo -e "  CPU诚信度: ${YELLOW}+0 (Steal >= 3%, 可能超卖)${PLAIN}"
+        fi
     fi
-    SCORE_TOTAL=$((SCORE_TOTAL + net_good * 8))
+
+    # 2. CPU性能 (sysbench单核)
+    print_progress "评估 CPU 性能..."
+    if command -v sysbench >/dev/null 2>&1; then
+        local single=$(sysbench cpu --cpu-max-prime=20000 --threads=1 run 2>/dev/null | grep "events per second" | awk '{print $4}')
+        if [ -n "$single" ]; then
+            if (( $(echo "$single > 1500" | bc -l) )); then
+                score_cpu_perf=20
+                echo -e "  CPU性能: ${GREEN}+10 (单核 > 1500, 优秀)${PLAIN}"
+            elif (( $(echo "$single > 1000" | bc -l) )); then
+                score_cpu_perf=15
+                echo -e "  CPU性能: ${GREEN}+5 (单核 > 1000, 良好)${PLAIN}"
+            else
+                echo -e "  CPU性能: ${YELLOW}+0 (单核 <= 1000, 一般)${PLAIN}"
+            fi
+        fi
+    fi
+
+    # 3. 内存性能
+    print_progress "评估 内存性能..."
+    if command -v sysbench >/dev/null 2>&1; then
+        local mem_read=$(sysbench memory --memory-total-size=1G --memory-oper=read run 2>/dev/null | grep "MiB transferred" | awk '{print $4}')
+        if [ -n "$mem_read" ]; then
+            if (( $(echo "$mem_read > 15000" | bc -l) )); then
+                score_memory=15
+                echo -e "  内存性能: ${GREEN}+7 (读取 > 15000 MiB/s, 优秀)${PLAIN}"
+            elif (( $(echo "$mem_read > 10000" | bc -l) )); then
+                score_memory=12
+                echo -e "  内存性能: ${GREEN}+4 (读取 > 10000 MiB/s, 良好)${PLAIN}"
+            else
+                echo -e "  内存性能: ${YELLOW}+0 (读取 <= 10000 MiB/s, 一般)${PLAIN}"
+            fi
+        fi
+    fi
+
+    # 4. 磁盘顺序读写
+    print_progress "评估 磁盘顺序读写..."
+    local disk_test_file="/tmp/lxbench_disk_score_test"
+    local dd_read=$(dd if=/dev/zero of="$disk_test_file" bs=1M count=256 conv=fdatasync 2>&1 | tail -n1 | awk '{print $(NF-1)}' 2>/dev/null)
+    rm -f "$disk_test_file"
+    if [ -n "$dd_read" ]; then
+        if (( $(echo "$dd_read > 500" | bc -l) )); then
+            score_disk_seq=15
+            echo -e "  磁盘顺序: ${GREEN}+8 (读写 > 500 MB/s, 优秀)${PLAIN}"
+        elif (( $(echo "$dd_read > 300" | bc -l) )); then
+            score_disk_seq=11
+            echo -e "  磁盘顺序: ${GREEN}+4 (读写 > 300 MB/s, 良好)${PLAIN}"
+        else
+            echo -e "  磁盘顺序: ${YELLOW}+0 (读写 <= 300 MB/s, 一般)${PLAIN}"
+        fi
+    fi
+
+    # 5. 磁盘4K随机
+    if command -v fio >/dev/null 2>&1; then
+        print_progress "评估 磁盘4K随机..."
+        local fio_out=$(fio --name=lxbench_score --size=256M --filename=/tmp/lxbench_score_test \
+            --bs=4k --rw=randread --ioengine=libaio --iodepth=64 --runtime=10 \
+            --numjobs=4 --group_reporting 2>/dev/null || echo "")
+        local rand_iops=$(echo "$fio_out" | grep "read:" | grep "IOPS" | head -n1 | awk '{print $2}')
+        rm -f /tmp/lxbench_score_test
+        if [ -n "$rand_iops" ]; then
+            if (( $(echo "$rand_iops > 5000" | bc -l) )); then
+                score_disk_rand=10
+                echo -e "  磁盘4K: ${GREEN}+10 (IOPS > 5000, 优秀)${PLAIN}"
+            elif (( $(echo "$rand_iops > 2000" | bc -l) )); then
+                score_disk_rand=5
+                echo -e "  磁盘4K: ${GREEN}+5 (IOPS > 2000, 良好)${PLAIN}"
+            else
+                echo -e "  磁盘4K: ${YELLOW}+0 (IOPS <= 2000, 一般)${PLAIN}"
+            fi
+        fi
+    else
+        score_disk_rand=2
+        echo -e "  磁盘4K: ${DIM}未测试 (fio未安装, 给保底分2分)${PLAIN}"
+    fi
+
+    # 6. 网络延迟
+    print_progress "评估 网络延迟..."
+    local lat_sum=0 lat_count=0
+    local test_ips=("180.153.0.1" "210.22.97.1" "211.136.112.50")
+    for ip in "${test_ips[@]}"; do
+        local lat=$(ping -c 2 -W 2 "$ip" 2>/dev/null | tail -n1 | awk -F '/' '{print $5}')
+        if [ -n "$lat" ]; then
+            lat_sum=$(echo "$lat_sum + $lat" | bc)
+            lat_count=$((lat_count + 1))
+        fi
+    done
+    if [ $lat_count -gt 0 ]; then
+        local lat_avg=$(echo "scale=2; $lat_sum / $lat_count" | bc)
+        if (( $(echo "$lat_avg < 30" | bc -l) )); then
+            score_network=20
+            echo -e "  网络延迟: ${GREEN}+10 (平均 < 30ms, 优秀)${PLAIN}"
+        elif (( $(echo "$lat_avg < 60" | bc -l) )); then
+            score_network=15
+            echo -e "  网络延迟: ${GREEN}+5 (平均 < 60ms, 良好)${PLAIN}"
+        else
+            echo -e "  网络延迟: ${YELLOW}+0 (平均 >= 60ms, 一般)${PLAIN}"
+        fi
+    else
+        echo -e "  网络延迟: ${DIM}无法检测, 保留基础分${PLAIN}"
+    fi
+
+    # 7. IP质量
+    print_progress "评估 IP质量..."
+    local ip_info=$(curl -s --max-time 3 "http://ip-api.com/json/" 2>/dev/null || echo "")
+    if echo "$ip_info" | grep -q '"isp"'; then
+        local isp=$(echo "$ip_info" | grep -o '"isp":"[^"]*"' | cut -d'"' -f4)
+        if echo "$isp" | grep -qi "cloud\|hosting\|datacenter\|server"; then
+            echo -e "  IP质量: ${YELLOW}+0 (数据中心IP)${PLAIN}"
+        else
+            score_ip=10
+            echo -e "  IP质量: ${GREEN}+5 (非数据中心IP, 加分)${PLAIN}"
+        fi
+    else
+        echo -e "  IP质量: ${DIM}无法检测, 保留基础分${PLAIN}"
+    fi
+
+    # 计算总分
+    SCORE_TOTAL=$((score_cpu_integrity + score_cpu_perf + score_memory + score_disk_seq + score_disk_rand + score_network + score_ip))
     [ $SCORE_TOTAL -gt 100 ] && SCORE_TOTAL=100
-    
+
+    # 显示明细
+    echo ""
+    echo -e "${BOLD}评分明细:${PLAIN}"
+    echo -e "  CPU诚信度: ${score_cpu_integrity}/10"
+    echo -e "  CPU性能:   ${score_cpu_perf}/20"
+    echo -e "  内存性能:  ${score_memory}/15"
+    echo -e "  磁盘顺序:  ${score_disk_seq}/15"
+    echo -e "  磁盘4K:    ${score_disk_rand}/10"
+    echo -e "  网络延迟:  ${score_network}/20"
+    echo -e "  IP质量:    ${score_ip}/10"
+    echo -e "  ────────────────────"
+    echo -e "  ${BOLD}总分:      ${CYAN}${SCORE_TOTAL}/100${PLAIN}"
+
+    # 评级
     echo ""
     echo -e "${BOLD}${CYAN}┌─────────────────────────────────────────────┐${PLAIN}"
     echo -e "${BOLD}${CYAN}│  综合性能得分: ${SCORE_TOTAL}/100                      │${PLAIN}"
@@ -806,7 +921,7 @@ EOF
         <p>🚀 服务器推荐: <a href="${RAINYUN_URL}">${RAINYUN_URL}</a></p>
         <p>📝 个人博客: <a href="${BLOG_URL}">${BLOG_URL}</a></p>
     </div>
-    <div class="footer">LXBench v${VERSION} · 智能双模节点 · Geekbench双跑分 · 超卖检测 · 五网路由</div>
+    <div class="footer">LXBench v${VERSION} · 智能双模节点 · 基础分45+加分制 · 超卖检测</div>
 </div>
 </body>
 </html>
@@ -815,7 +930,7 @@ EOF
 }
 
 # ============================================================
-# 17. Markdown报告 (新增)
+# 17. Markdown报告
 # ============================================================
 generate_md_report() {
     cat > "$MD_REPORT" << EOF
@@ -854,11 +969,11 @@ main() {
     clear
     print_banner
     select_mode
-    
+
     print_info "开始 LXBench ${VERSION} 测评..."
     local start_time=$(date +%s)
     mkdir -p "$REPORT_DIR"
-    
+
     install_deps
     detect_location
     collect_system_info
@@ -875,7 +990,7 @@ main() {
     generate_html_report
     generate_md_report
     cleanup
-    
+
     local end_time=$(date +%s)
     local duration=$((end_time - start_time))
     echo ""
