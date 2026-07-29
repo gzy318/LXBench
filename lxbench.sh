@@ -119,8 +119,8 @@ RELEASE=$(get_release)
 select_mode() {
     echo ""
     echo -e "${BOLD}请选择测试模式:${PLAIN}"
-    echo "  1) 完整测试 (全部项目，约15-20分钟)"
-    echo "  2) 快速测试 (跳过Geekbench/UnixBench，约5-8分钟)"
+    echo "  1) 完整测试 (全部项目，很慢)"
+    echo "  2) 快速测试 (跳过Geekbench/UnixBench)"
     echo "  3) 仅网络测试 (延迟+路由+测速)"
     echo "  4) 仅性能测试 (CPU+内存+磁盘)"
     echo "  5) 仅流媒体+IP质量"
@@ -316,7 +316,7 @@ test_cpu() {
     fi
 
     if [ "$TEST_MODE" = "full" ]; then
-        print_progress "UnixBench 测试 (约5-8分钟)..."
+        print_progress "UnixBench 测试 (十分的久，请耐心)..."
         if command -v wget >/dev/null 2>&1; then
             local ub_output=$(wget -qO- https://raw.githubusercontent.com/teddysun/across/master/unixbench.sh 2>/dev/null | bash 2>/dev/null || echo "")
             local ub_score=$(echo "$ub_output" | grep -o "Benchmark Run:[^0-9]*[0-9.]*" | grep -o "[0-9.]*" | tail -1)
