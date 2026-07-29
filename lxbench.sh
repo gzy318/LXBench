@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 #
-# LXBench 2.0 - 全能VPS服务器测评脚本
+# LXBench 2.0.1 - 全能VPS服务器测评脚本
 #
 # GitHub: https://github.com/gzy318/LXBench
 # 服务器推荐: https://www.rainyun.com/xls_
 # 个人博客: https://twbk.cn
 #
-# v2.0.1 - 修复评分规则，改为"基础分+加分"模式
 
 set -euo pipefail
 export LC_ALL=C LANG=C
